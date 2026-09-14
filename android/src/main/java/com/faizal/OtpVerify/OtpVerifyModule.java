@@ -8,6 +8,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.IntentSender;
 import android.os.Build;
 import android.util.Log;
 import com.facebook.react.bridge.Arguments;
@@ -15,13 +16,13 @@ import com.facebook.react.bridge.LifecycleEventListener;
 
 import com.facebook.react.bridge.ActivityEventListener;
 import com.facebook.react.bridge.WritableArray;
-import com.google.android.gms.auth.api.Auth;
+import com.google.android.gms.auth.api.credentials.Credential;
+import com.google.android.gms.auth.api.credentials.Credentials;
+import com.google.android.gms.auth.api.credentials.HintRequest;
 import com.google.android.gms.auth.api.identity.GetPhoneNumberHintIntentRequest;
 import com.google.android.gms.auth.api.identity.Identity;
 import com.google.android.gms.auth.api.phone.SmsRetriever;
 import com.google.android.gms.auth.api.phone.SmsRetrieverClient;
-import com.google.android.gms.common.api.ApiException;
-import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.tasks.OnCanceledListener;
 import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.OnFailureListener;
@@ -41,7 +42,7 @@ public class OtpVerifyModule extends ReactContextBaseJavaModule implements Lifec
     public static final String NAME = "OtpVerify";
     private static final String TAG = OtpVerifyModule.class.getSimpleName();
     private static final int RESOLVE_HINT = 10001;
-    private GoogleApiClient apiClient;
+    private static final int RESOLVE_HINT_LEGACY = 10002;
     private Promise requestHintCallback;
     private final ReactApplicationContext reactContext;
     private BroadcastReceiver mReceiver;
@@ -50,13 +51,10 @@ public class OtpVerifyModule extends ReactContextBaseJavaModule implements Lifec
     public OtpVerifyModule(ReactApplicationContext reactContext) {
         super(reactContext);
         this.reactContext = reactContext;
-                mReceiver = new OtpBroadcastReceiver(reactContext);
-                getReactApplicationContext().addLifecycleEventListener(this);
+        mReceiver = new OtpBroadcastReceiver(reactContext);
+        getReactApplicationContext().addLifecycleEventListener(this);
         registerReceiverIfNecessary(mReceiver);
         reactContext.addActivityEventListener(this);
-        apiClient = new GoogleApiClient.Builder(reactContext)
-                .addApi(Auth.GOOGLE_SIGN_IN_API)
-                .build();
     }
 
     @Override
@@ -70,14 +68,13 @@ public class OtpVerifyModule extends ReactContextBaseJavaModule implements Lifec
         Activity currentActivity = getCurrentActivity();
         requestHintCallback = promise;
 
-
         if (currentActivity == null) {
-            requestHintCallback.reject("No Activity Found", "Current Activity Null.");
+            rejectHint("No Activity Found", "Current Activity Null.");
             return;
         }
 
         if (isSimUnavailable()) {
-            requestHintCallback.reject("No Sim Avaiable", "Simcard is not available");
+            rejectHint("No Sim Avaiable", "Simcard is not available");
             return;
         }
 
@@ -85,35 +82,86 @@ public class OtpVerifyModule extends ReactContextBaseJavaModule implements Lifec
             GetPhoneNumberHintIntentRequest request = GetPhoneNumberHintIntentRequest.builder().build();
             Identity.getSignInClient(currentActivity)
                     .getPhoneNumberHintIntent(request)
-                    .addOnSuccessListener( result -> {
+                    .addOnSuccessListener(result -> {
                         try {
-//                            phoneNumberHintIntentResultLauncher.launch(result.getIntentSender());
-                            currentActivity.startIntentSenderForResult(result.getIntentSender(), RESOLVE_HINT, null, 0, 0, 0);
-                        } catch(Exception e) {
-                            Log.e(TAG, "Launching the PendingIntent failed", e);
-                            requestHintCallback.reject("Simcard intent failed", "Simcard intent failed");
+                            currentActivity.startIntentSenderForResult(
+                                    result.getIntentSender(), RESOLVE_HINT, null, 0, 0, 0);
+                        } catch (Exception e) {
+                            Log.e(TAG, "Launching the PendingIntent failed, trying legacy hint", e);
+                            requestLegacyHint(currentActivity);
                         }
                     })
                     .addOnFailureListener(e -> {
-                        Log.e(TAG, "Phone Number Hint failed", e);
-                        requestHintCallback.reject("Simcard permission rejected", "Simcard access forbidden");
+                        Log.e(TAG, "Phone Number Hint failed, trying legacy hint", e);
+                        requestLegacyHint(currentActivity);
                     });
-
         } catch (Exception e) {
-            requestHintCallback.reject(e);
+            Log.e(TAG, "Phone Number Hint threw, trying legacy hint", e);
+            requestLegacyHint(currentActivity);
         }
     }
-    
+
+    @SuppressWarnings("deprecation")
+    private void requestLegacyHint(Activity currentActivity) {
+        if (currentActivity == null) {
+            rejectHint("No Activity Found", "Current Activity Null.");
+            return;
+        }
+        if (requestHintCallback == null) {
+            return;
+        }
+
+        try {
+            HintRequest hintRequest = new HintRequest.Builder()
+                    .setPhoneNumberIdentifierSupported(true)
+                    .build();
+            currentActivity.startIntentSenderForResult(
+                    Credentials.getClient(currentActivity)
+                            .getHintPickerIntent(hintRequest)
+                            .getIntentSender(),
+                    RESOLVE_HINT_LEGACY,
+                    null,
+                    0,
+                    0,
+                    0);
+            Log.d(TAG, "Legacy phone hint picker launched");
+        } catch (IntentSender.SendIntentException e) {
+            Log.e(TAG, "Legacy hint picker failed", e);
+            rejectHint("HINT_UNAVAILABLE", "Phone number hint unavailable");
+        } catch (Exception e) {
+            Log.e(TAG, "Legacy hint picker failed", e);
+            rejectHint("HINT_UNAVAILABLE", e.getMessage() != null ? e.getMessage() : "Phone number hint unavailable");
+        }
+    }
+
+    private void resolveHint(String phoneNumber) {
+        if (requestHintCallback == null) {
+            return;
+        }
+        Promise promise = requestHintCallback;
+        requestHintCallback = null;
+        promise.resolve(phoneNumber);
+    }
+
+    private void rejectHint(String code, String message) {
+        if (requestHintCallback == null) {
+            return;
+        }
+        Promise promise = requestHintCallback;
+        requestHintCallback = null;
+        promise.reject(code, message);
+    }
+
     public boolean isSimUnavailable() {
         try {
             Activity currentActivity = getCurrentActivity();
-            TelephonyManager telephonyManager = (TelephonyManager) currentActivity.getSystemService(Context.TELEPHONY_SERVICE);            
+            TelephonyManager telephonyManager = (TelephonyManager) currentActivity.getSystemService(Context.TELEPHONY_SERVICE);
             return !(telephonyManager.getSimState() == TelephonyManager.SIM_STATE_READY);
         } catch (UnsupportedOperationException e) {
             return true;
         }
     }
-    
+
     @ReactMethod
     public void getOtp(Promise promise) {
         requestOtp(promise);
@@ -204,20 +252,44 @@ public class OtpVerifyModule extends ReactContextBaseJavaModule implements Lifec
             }
         }
     }
+
     @Override
+    @SuppressWarnings("deprecation")
     public void onActivityResult(Activity activity, int requestCode, int resultCode, Intent data) {
+        if (requestCode != RESOLVE_HINT && requestCode != RESOLVE_HINT_LEGACY) {
+            return;
+        }
+
         if (requestCode == RESOLVE_HINT) {
-            if (resultCode == Activity.RESULT_OK) {
-                String phoneNumber = null;
+            if (resultCode == Activity.RESULT_OK && data != null) {
                 try {
-                    phoneNumber = Identity.getSignInClient(activity).getPhoneNumberFromIntent(data);
-                    requestHintCallback.resolve(phoneNumber);
-                } catch (ApiException e) {
-                    requestHintCallback.reject(e.getMessage());
-                } catch (NullPointerException e) {
-                    requestHintCallback.reject(e.getMessage());
+                    String phoneNumber = Identity.getSignInClient(activity).getPhoneNumberFromIntent(data);
+                    resolveHint(phoneNumber);
+                    return;
+                } catch (Exception e) {
+                    Log.e(TAG, "New hint result parse failed, trying legacy hint", e);
                 }
+            } else {
+                Log.e(TAG, "New hint cancelled/unavailable (resultCode=" + resultCode + "), trying legacy hint");
             }
+            requestLegacyHint(activity);
+            return;
+        }
+
+        if (resultCode != Activity.RESULT_OK || data == null) {
+            rejectHint("HINT_CANCELLED", "Phone number hint cancelled or unavailable");
+            return;
+        }
+
+        try {
+            Credential credential = data.getParcelableExtra(Credential.EXTRA_KEY);
+            if (credential != null && credential.getId() != null) {
+                resolveHint(credential.getId());
+            } else {
+                rejectHint("HINT_UNAVAILABLE", "Phone number hint unavailable");
+            }
+        } catch (Exception e) {
+            rejectHint("HINT_UNAVAILABLE", e.getMessage() != null ? e.getMessage() : "Phone number hint unavailable");
         }
     }
 
