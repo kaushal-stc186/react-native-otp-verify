@@ -1,7 +1,7 @@
 {
-  "name": "react-native-otp-verify",
-  "version": "1.2.0",
-  "description": "Otp verify",
+  "name": "react-native-phone-sms-retriever",
+  "version": "1.2.3",
+  "description": "Android SMS Retriever and Google phone number hint for React Native",
   "main": "lib/commonjs/index",
   "module": "lib/module/index",
   "types": "lib/typescript/index.d.ts",
@@ -38,13 +38,16 @@
     "ios",
     "android"
   ],
-  "repository": "https://github.com/faizalshap/react-native-otp-verify",
-  "author": "faizalshap <faiz2rock@gmail.com> (https://github.com/faizalshap)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kaushal-stc186/react-native-otp-verify.git"
+  },
+  "author": "kaushalstc",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/faizalshap/react-native-otp-verify/issues"
+    "url": "https://github.com/kaushal-stc186/react-native-otp-verify/issues"
   },
-  "homepage": "https://github.com/faizalshap/react-native-otp-verify#readme",
+  "homepage": "https://github.com/kaushal-stc186/react-native-otp-verify#readme",
   "publishConfig": {
     "registry": "https://registry.npmjs.org/"
   },

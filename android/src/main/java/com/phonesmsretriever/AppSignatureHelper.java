@@ -1,4 +1,4 @@
-package com.faizal.OtpVerify;
+package com.phonesmsretriever;
 
 import android.content.Context;
 import android.content.ContextWrapper;
@@ -25,22 +25,15 @@ public class AppSignatureHelper extends ContextWrapper {
         super(context);
     }
 
-    /**
-     * Get all the app signatures for the current package
-     *
-     * @return
-     */
     public ArrayList<String> getAppSignatures() {
         ArrayList<String> appCodes = new ArrayList<>();
 
         try {
-            // Get all package signatures for the current package
             String packageName = getPackageName();
             PackageManager packageManager = getPackageManager();
             Signature[] signatures = packageManager.getPackageInfo(packageName,
                     PackageManager.GET_SIGNATURES).signatures;
 
-            // For each signature create a compatible hash
             for (Signature signature : signatures) {
                 String hash = hash(packageName, signature.toCharsString());
                 if (hash != null) {
@@ -62,9 +55,7 @@ public class AppSignatureHelper extends ContextWrapper {
             }
             byte[] hashSignature = messageDigest.digest();
 
-            // truncated into NUM_HASHED_BYTES
             hashSignature = Arrays.copyOfRange(hashSignature, 0, NUM_HASHED_BYTES);
-            // encode into Base64
             String base64Hash = Base64.encodeToString(hashSignature, Base64.NO_PADDING | Base64.NO_WRAP);
             base64Hash = base64Hash.substring(0, NUM_BASE64_CHAR);
 

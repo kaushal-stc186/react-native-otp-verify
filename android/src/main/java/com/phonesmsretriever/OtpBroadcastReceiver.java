@@ -1,4 +1,4 @@
-package com.faizal.OtpVerify;
+package com.phonesmsretriever;
 
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -17,7 +17,7 @@ public class OtpBroadcastReceiver extends BroadcastReceiver {
 
     private ReactApplicationContext mContext;
 
-    private static final String EVENT = "com.faizalshap.otpVerify:otpReceived";
+    private static final String EVENT = "com.phonesmsretriever:otpReceived";
 
     public OtpBroadcastReceiver(ReactApplicationContext context) {
         mContext = context;
@@ -57,7 +57,6 @@ public class OtpBroadcastReceiver extends BroadcastReceiver {
 
             switch (status.getStatusCode()) {
                 case CommonStatusCodes.SUCCESS:
-                    // Get SMS message contents
                     String message = (String) extras.get(SmsRetriever.EXTRA_SMS_MESSAGE);
                     receiveMessage(message);
                     if (message != null) {

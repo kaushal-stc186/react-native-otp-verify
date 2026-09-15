@@ -1,4 +1,4 @@
-package com.faizal.OtpVerify;
+package com.phonesmsretriever;
 
 import androidx.annotation.NonNull;
 
@@ -11,12 +11,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-public class OtpVerifyPackage implements ReactPackage {
+public class PhoneSmsRetrieverPackage implements ReactPackage {
     @NonNull
     @Override
     public List<NativeModule> createNativeModules(@NonNull ReactApplicationContext reactContext) {
         List<NativeModule> modules = new ArrayList<>();
-        modules.add(new OtpVerifyModule(reactContext));
+        modules.add(new PhoneSmsRetrieverModule(reactContext));
         return modules;
     }
 

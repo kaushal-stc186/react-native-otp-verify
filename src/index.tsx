@@ -2,13 +2,15 @@ import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import { useEffect, useState } from 'react';
 
 const LINKING_ERROR =
-  `The package 'react-native-otp-verify' doesn't seem to be linked. Make sure: \n\n` +
+  `The package 'react-native-phone-sms-retriever' doesn't seem to be linked. Make sure: \n\n` +
   Platform.select({ ios: "- You have run 'pod install'\n", default: '' }) +
   '- You rebuilt the app after installing the package\n' +
   '- You are not using Expo managed workflow\n';
 
-const RNOtpVerify = NativeModules.OtpVerify
-  ? NativeModules.OtpVerify
+const EVENT = 'com.phonesmsretriever:otpReceived';
+
+const RNPhoneSmsRetriever = NativeModules.PhoneSmsRetriever
+  ? NativeModules.PhoneSmsRetriever
   : new Proxy(
       {},
       {
@@ -18,12 +20,14 @@ const RNOtpVerify = NativeModules.OtpVerify
       }
     );
 
-const eventEmitter = new NativeEventEmitter(RNOtpVerify);
+const eventEmitter = new NativeEventEmitter(RNPhoneSmsRetriever);
 
-interface OtpVerify {
+interface PhoneSmsRetriever {
   getOtp: () => Promise<boolean>;
   getHash: () => Promise<string[]>;
   requestHint: () => Promise<string>;
+  requestPhoneHint: () => Promise<string>;
+  requestLegacyPhoneHint: () => Promise<string>;
   startOtpListener: (
     handler: (value: string) => any
   ) => Promise<import('react-native').EmitterSubscription>;
@@ -38,7 +42,7 @@ export async function getOtp(): Promise<boolean> {
     console.warn('Not Supported on iOS');
     return false;
   }
-  return RNOtpVerify.getOtp();
+  return RNPhoneSmsRetriever.getOtp();
 }
 
 export function startOtpListener(
@@ -99,38 +103,55 @@ export async function getHash(): Promise<string[]> {
     console.warn('Not Supported on iOS');
     return [];
   }
-  return RNOtpVerify.getHash();
+  return RNPhoneSmsRetriever.getHash();
 }
+
+/** New Phone Number Hint first, then legacy Credentials hint as fallback. */
 export async function requestHint(): Promise<string> {
   if (Platform.OS === 'ios') {
     console.warn('Not Supported on iOS');
     return '';
   }
-  return RNOtpVerify.requestHint();
+  return RNPhoneSmsRetriever.requestHint();
+}
+
+/** New Phone Number Hint API only (no legacy fallback). */
+export async function requestPhoneHint(): Promise<string> {
+  if (Platform.OS === 'ios') {
+    console.warn('Not Supported on iOS');
+    return '';
+  }
+  return RNPhoneSmsRetriever.requestPhoneHint();
+}
+
+/** Legacy Smart Lock / Credentials HintRequest only. */
+export async function requestLegacyPhoneHint(): Promise<string> {
+  if (Platform.OS === 'ios') {
+    console.warn('Not Supported on iOS');
+    return '';
+  }
+  return RNPhoneSmsRetriever.requestLegacyPhoneHint();
 }
 
 export function addListener(
   handler: (value: string) => any
 ): import('react-native').EmitterSubscription {
-  return eventEmitter.addListener(
-    'com.faizalshap.otpVerify:otpReceived',
-    handler
-  );
+  return eventEmitter.addListener(EVENT, handler);
 }
 
 export function removeListener(): void {
-  return eventEmitter.removeAllListeners(
-    'com.faizalshap.otpVerify:otpReceived'
-  );
+  return eventEmitter.removeAllListeners(EVENT);
 }
 
-const OtpVerify: OtpVerify = {
+const PhoneSmsRetrieverApi: PhoneSmsRetriever = {
   getOtp,
   getHash,
   addListener,
   removeListener,
   startOtpListener,
   requestHint,
+  requestPhoneHint,
+  requestLegacyPhoneHint,
 };
 
-export default OtpVerify;
+export default PhoneSmsRetrieverApi;

@@ -1,123 +1,168 @@
-# React Native Otp Verify ✉️
+# react-native-phone-sms-retriever
 
-___
-[![npm version](https://badge.fury.io/js/react-native-otp-verify.svg)](https://badge.fury.io/js/react-native-otp-verify)
+Android [SMS Retriever](https://developers.google.com/identity/sms-retriever/overview) OTP auto-read and Google phone-number hint for React Native.
 
-- Automatic SMS Verification with the SMS Retriever API (Android Only)
-- Phone Number Retrieving using the Phone Number Hint API (Android Only)
+**Platform:** Android only. On iOS, methods log `Not Supported on iOS` and return empty/false — they do not throw.
 
-Automatic SMS Verification with the SMS Retriever API, you can perform SMS-based user verification in your Android app automatically, without requiring the user to manually type verification codes, and without requiring any extra app permissions.
+Fork of [react-native-otp-verify](https://github.com/faizalshap/react-native-otp-verify). Native module: `PhoneSmsRetriever` (`com.phonesmsretriever`).
 
-## Message Format/Structure
-In order to detect the message, **_SMS message must include a hash_** that identifies your app. This hash can be obtained by using the getHash() method below.
+## Install
 
-Please read the official documentation for the message structure at this
-[Google developer guide](https://developers.google.com/identity/sms-retriever/verify)
-
-## Quick start 🔥
-#### Installation
-`$ npm install react-native-otp-verify --save`
-
-or
-
-`$ yarn add react-native-otp-verify`
-
-
-## Usage
-
-#### Import the Library
-```javascript
-import {
-  getHash,
-  startOtpListener,
-  useOtpVerify,
-} from 'react-native-otp-verify';
+```bash
+npm install react-native-phone-sms-retriever
+# or
+yarn add react-native-phone-sms-retriever
 ```
 
-#### Using Hook
-```javascript
+Rebuild the native app after install (autolinking, RN ≥ 0.60). Does not work in Expo Go — use a dev client or bare workflow.
 
-// You can use the startListener and stopListener to manually trigger listeners again.
-// optionally pass numberOfDigits if you want to extract otp
-const { hash, otp, message, timeoutError, stopListener, startListener } = useOtpVerify({numberOfDigits: 4});
+## SMS OTP
+
+### 1. Get your app hash
+
+Run once on a debug/release build of **your** app (hashes differ by signing key):
+
+```javascript
+import { getHash } from 'react-native-phone-sms-retriever';
+
+getHash().then(console.log); // e.g. ["FA+9qCX9VSu"]
 ```
-#### Properties
-| Property        |  Type  |  Description  |
-| ------------- |:-------------:|:-------------:|
-| hash      | string[] | The hash code for the application which should be added at the end of message.|
-| otp     | string | OTP retreived from SMS when received. (Must pass `numberOfDigits`)       |
-| message     | string |  SMS message when received.    |
-| timeoutError | boolean | Flag is set to true when after timeout (5 minutes) [Check here](https://developers.google.com/identity/sms-retriever/request#2_start_the_sms_retriever)  |
-| startListener | function | Manually starts listener again in case of timeout or any other error      |
-| stopListener | function | Stops listener for the sms      |
 
-#### Using Methods
+Give this string to whoever sends the OTP SMS.
+
+### 2. SMS body format
+
+Google requires this pattern ([docs](https://developers.google.com/identity/sms-retriever/verify)):
+
+```
+<#> Your OTP is 1234
+FA+9qCX9VSu
+```
+
+- First line: message text containing the OTP digits.
+- Second line: 11-character app hash from `getHash()`.
+- `<#>` prefix is required.
+
+SMS must arrive on the device within ~5 minutes of starting the listener.
+
+### 3. Listen in JS
+
 ```javascript
-// using methods
+import { useEffect } from 'react';
+import { startOtpListener, removeListener } from 'react-native-phone-sms-retriever';
+
 useEffect(() => {
-  getHash().then(hash => {
-    // use this hash in the message.
-  }).catch(console.log);
-
-  startOtpListener(message => {
-    // extract the otp using regex e.g. the below regex extracts 4 digit otp from message
-    const otp = /(\d{4})/g.exec(message)[1];
-    setOtp(otp);
+  startOtpListener((message) => {
+    if (message === 'Timeout Error.') {
+      // no SMS within retriever window — restart listener or ask user to re-request OTP
+      return;
+    }
+    const otp = /(\d{4})/.exec(message)?.[1];
+    if (otp) setOtp(otp);
   });
   return () => removeListener();
 }, []);
 ```
-## Example
-See the example app in `example` folder.
-### Auto Linking for React Native >= 0.60
 
-Linking the package manually is not required anymore with [**Autolinking**](https://github.com/react-native-community/cli/blob/master/docs/autolinking.md).
+Or use the hook (starts listener on mount, calls `removeListener` on unmount):
 
-### Manual Linking
+```javascript
+import { useOtpVerify } from 'react-native-phone-sms-retriever';
 
-1. Open up `android/app/src/main/java/[...]/MainActivity.java`
-- Add `import com.faizal.OtpVerify.OtpVerifyPackage;` to the imports at the top of the file
-- Add `new OtpVerifyPackage()` to the list returned by the `getPackages()` method
-2. Append the following lines to `android/settings.gradle`:
-   ```gradle
-   include ':react-native-otp-verify'
-   project(':react-native-otp-verify').projectDir = new File(rootProject.projectDir, 	'../node_modules/react-native-otp-verify/android')
-   ```
-3. Insert the following lines inside the dependencies block in `android/app/build.gradle`:
-   ```gradle
-     implementation project(':react-native-otp-verify')
-   ```
+const { hash, otp, message, timeoutError, startListener, stopListener } =
+  useOtpVerify({ numberOfDigits: 4 });
+```
 
-#### Methods
----
-#### `requestHint: () => Promise<string>`
+Event name (if you use `addListener` directly): `com.phonesmsretriever:otpReceived`.
 
-Gets phone number in a frictionless way to show a user’s (SIM-based) phone numbers as a hint. [Check here](https://developers.google.com/identity/phone-number-hint/android#request-phone-number-hint)
+## Phone number hint
 
----
-#### `startOtpListener(handler:(message:string)=>any):Promise<Subscription>`
+Shows a Google picker so the user can select a number instead of typing it.
 
-Start listening for OTP/SMS and adds listener for the handler passed which is called when message is received..
+```javascript
+import { requestHint } from 'react-native-phone-sms-retriever';
 
----
-#### `getOtp():Promise<boolean>`
+requestHint()
+  .then((phone) => setPhone(phone))
+  .catch((err) => {
+    // err.code — see table below
+  });
+```
 
-Start listening for OTP/SMS. Return true if listener starts else throws error.
+| Method | Behavior |
+|--------|----------|
+| `requestHint()` | New [Phone Number Hint](https://developers.google.com/identity/phone-number-hint/android) API, then legacy Credentials picker if that fails |
+| `requestPhoneHint()` | New API only |
+| `requestLegacyPhoneHint()` | Legacy Credentials `HintRequest` only |
 
----
-#### `getHash():Promise<string[]>`
+### When hint fails (not a bug)
 
-Gets the hash code for the application which should be added at the end of message.
-This is just a one time process.
+Many SIMs do not store the phone number (MSISDN). Play Services then returns errors like `ApiException: 16: No phone number is found on this device`. **Use manual entry** — there is no client-side fix.
 
----
-#### `addListener(handler:(message:string)=>any):Subscription`
+### Hint error codes (`err.code`)
 
-Adds a javascript listener to the handler passed which is called when message is received.
+| Code | When | What to do |
+|------|------|------------|
+| `No Sim Avaiable` | SIM not `SIM_STATE_READY` | Ask user to check SIM |
+| `No Activity Found` | No foreground Activity | Call from a mounted screen, not at app launch |
+| `HINT_CANCELLED` | User dismissed picker | Manual entry |
+| `HINT_UNAVAILABLE` | No number on device, legacy API missing on classpath, or parse failed | Manual entry |
+| `HINT_LAUNCH_FAILED` | Could not open hint UI (new API only path) | Retry or manual entry |
 
----
-#### `removeListener():void`
+Legacy picker needs `com.google.android.gms.auth.api.credentials.HintRequest`, removed in `play-services-auth` **21.0.0+**. This package pins **20.7.0** (see below).
 
-Removes all listeners.
+## play-services-auth 20.7.0
 
----
+This library's `android/build.gradle` already depends on and **forces** `com.google.android.gms:play-services-auth:20.7.0` app-wide:
+
+```gradle
+implementation "com.google.android.gms:play-services-auth:20.7.0"
+
+rootProject.allprojects {
+    configurations.all {
+        resolutionStrategy {
+            force "com.google.android.gms:play-services-auth:20.7.0"
+        }
+    }
+}
+```
+
+If Firebase or Google Sign-In still resolves **21.x** in your app, add the same `resolutionStrategy` block to your Android **root** `build.gradle`, then rebuild and retest sign-in flows.
+
+## Use with `react-native-otp-verify`
+
+Both packages can be installed together. They use different Java packages and native module names, so you avoid dex duplicate errors on `AppSignatureHelper`:
+
+| Package | Native module | Java package |
+|---------|---------------|--------------|
+| `react-native-phone-sms-retriever` | `PhoneSmsRetriever` | `com.phonesmsretriever` |
+| `react-native-otp-verify` | `OtpVerify` | `com.faizal.OtpVerify` |
+
+Import SMS/hint APIs from whichever package your screen uses — do not assume both expose the same JS module name.
+
+## API
+
+```typescript
+getHash(): Promise<string[]>
+getOtp(): Promise<boolean>
+startOtpListener(handler: (message: string) => void): Promise<EmitterSubscription>
+addListener(handler: (message: string) => void): EmitterSubscription
+removeListener(): void
+
+requestHint(): Promise<string>
+requestPhoneHint(): Promise<string>
+requestLegacyPhoneHint(): Promise<string>
+
+useOtpVerify({ numberOfDigits?: number })
+// → { hash, otp, message, timeoutError, startListener, stopListener }
+```
+
+## Debug
+
+```bash
+adb logcat -s PhoneSmsRetrieverModule:D PhoneSmsRetrieverModule:E SMS:D
+```
+
+## License
+
+MIT

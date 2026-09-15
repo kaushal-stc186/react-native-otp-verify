@@ -20,10 +20,10 @@ def safeExtGet(prop, fallback) {
 android {
     def agpVersion = com.android.Version.ANDROID_GRADLE_PLUGIN_VERSION.tokenize('.')[0].toInteger()
     if (agpVersion >= 7) {
-        namespace 'com.faizal.OtpVerify'
+        namespace 'com.phonesmsretriever'
     }
     compileSdkVersion safeExtGet('OtpVerify_compileSdkVersion', 34)
-    namespace 'com.faizal.OtpVerify'
+    namespace 'com.phonesmsretriever'
     defaultConfig {
         minSdkVersion safeExtGet('OtpVerify_minSdkVersion', 21)
         targetSdkVersion safeExtGet('OtpVerify_targetSdkVersion', 34)
@@ -59,5 +59,15 @@ repositories {
 dependencies {
     //noinspection GradleDynamicVersion
     implementation "com.facebook.react:react-native:+"  // From node_modules
-    implementation "com.google.android.gms:play-services-auth:21.2.0"
+    // Must stay on 20.7.0 for legacy Credentials HintRequest (removed in 21+).
+    implementation "com.google.android.gms:play-services-auth:20.7.0"
+}
+
+// App-wide force so Firebase / Google Sign-In cannot resolve auth 21.x.
+rootProject.allprojects {
+    configurations.all {
+        resolutionStrategy {
+            force "com.google.android.gms:play-services-auth:20.7.0"
+        }
+    }
 }

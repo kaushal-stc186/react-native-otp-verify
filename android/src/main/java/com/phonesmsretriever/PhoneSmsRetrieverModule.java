@@ -1,4 +1,4 @@
-package com.faizal.OtpVerify;
+package com.phonesmsretriever;
 
 import androidx.annotation.NonNull;
 import android.annotation.SuppressLint;
@@ -8,7 +8,6 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.IntentSender;
 import android.os.Build;
 import android.util.Log;
 import com.facebook.react.bridge.Arguments;
@@ -16,9 +15,6 @@ import com.facebook.react.bridge.LifecycleEventListener;
 
 import com.facebook.react.bridge.ActivityEventListener;
 import com.facebook.react.bridge.WritableArray;
-import com.google.android.gms.auth.api.credentials.Credential;
-import com.google.android.gms.auth.api.credentials.Credentials;
-import com.google.android.gms.auth.api.credentials.HintRequest;
 import com.google.android.gms.auth.api.identity.GetPhoneNumberHintIntentRequest;
 import com.google.android.gms.auth.api.identity.Identity;
 import com.google.android.gms.auth.api.phone.SmsRetriever;
@@ -37,18 +33,19 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.module.annotations.ReactModule;
 
-@ReactModule(name = OtpVerifyModule.NAME)
-public class OtpVerifyModule extends ReactContextBaseJavaModule implements LifecycleEventListener, ActivityEventListener {
-    public static final String NAME = "OtpVerify";
-    private static final String TAG = OtpVerifyModule.class.getSimpleName();
-    private static final int RESOLVE_HINT = 10001;
-    private static final int RESOLVE_HINT_LEGACY = 10002;
+@ReactModule(name = PhoneSmsRetrieverModule.NAME)
+public class PhoneSmsRetrieverModule extends ReactContextBaseJavaModule implements LifecycleEventListener, ActivityEventListener {
+    public static final String NAME = "PhoneSmsRetriever";
+    private static final String TAG = PhoneSmsRetrieverModule.class.getSimpleName();
+    private static final int RESOLVE_HINT = 11001;
+    private static final int RESOLVE_HINT_LEGACY = 11002;
     private Promise requestHintCallback;
+    private boolean allowLegacyFallback = true;
     private final ReactApplicationContext reactContext;
     private BroadcastReceiver mReceiver;
     private boolean isReceiverRegistered = false;
 
-    public OtpVerifyModule(ReactApplicationContext reactContext) {
+    public PhoneSmsRetrieverModule(ReactApplicationContext reactContext) {
         super(reactContext);
         this.reactContext = reactContext;
         mReceiver = new OtpBroadcastReceiver(reactContext);
@@ -63,8 +60,47 @@ public class OtpVerifyModule extends ReactContextBaseJavaModule implements Lifec
         return NAME;
     }
 
+    /**
+     * New Phone Number Hint first, then legacy Credentials HintRequest as fallback.
+     */
     @ReactMethod
     public void requestHint(Promise promise) {
+        allowLegacyFallback = true;
+        requestPhoneHintInternal(promise);
+    }
+
+    /**
+     * New Phone Number Hint API only (no legacy fallback).
+     */
+    @ReactMethod
+    public void requestPhoneHint(Promise promise) {
+        allowLegacyFallback = false;
+        requestPhoneHintInternal(promise);
+    }
+
+    /**
+     * Legacy Smart Lock / Credentials HintRequest only.
+     */
+    @ReactMethod
+    public void requestLegacyPhoneHint(Promise promise) {
+        allowLegacyFallback = false;
+        requestHintCallback = promise;
+
+        Activity currentActivity = getCurrentActivity();
+        if (currentActivity == null) {
+            rejectHint("No Activity Found", "Current Activity Null.");
+            return;
+        }
+
+        if (isSimUnavailable()) {
+            rejectHint("No Sim Avaiable", "Simcard is not available");
+            return;
+        }
+
+        requestLegacyHint(currentActivity);
+    }
+
+    private void requestPhoneHintInternal(Promise promise) {
         Activity currentActivity = getCurrentActivity();
         requestHintCallback = promise;
 
@@ -87,21 +123,43 @@ public class OtpVerifyModule extends ReactContextBaseJavaModule implements Lifec
                             currentActivity.startIntentSenderForResult(
                                     result.getIntentSender(), RESOLVE_HINT, null, 0, 0, 0);
                         } catch (Exception e) {
-                            Log.e(TAG, "Launching the PendingIntent failed, trying legacy hint", e);
-                            requestLegacyHint(currentActivity);
+                            Log.e(TAG, "Launching the PendingIntent failed", e);
+                            if (allowLegacyFallback) {
+                                Log.e(TAG, "trying legacy hint");
+                                requestLegacyHint(currentActivity);
+                            } else {
+                                rejectHint("HINT_LAUNCH_FAILED", "Launching the PendingIntent failed");
+                            }
                         }
                     })
                     .addOnFailureListener(e -> {
-                        Log.e(TAG, "Phone Number Hint failed, trying legacy hint", e);
-                        requestLegacyHint(currentActivity);
+                        Log.e(TAG, "Phone Number Hint failed", e);
+                        if (allowLegacyFallback) {
+                            Log.e(TAG, "Phone Number Hint failed, trying legacy hint", e);
+                            requestLegacyHint(currentActivity);
+                        } else {
+                            rejectHint(
+                                    "HINT_UNAVAILABLE",
+                                    e.getMessage() != null ? e.getMessage() : "Phone number hint unavailable");
+                        }
                     });
         } catch (Exception e) {
-            Log.e(TAG, "Phone Number Hint threw, trying legacy hint", e);
-            requestLegacyHint(currentActivity);
+            Log.e(TAG, "Phone Number Hint threw", e);
+            if (allowLegacyFallback) {
+                Log.e(TAG, "Phone Number Hint threw, trying legacy hint", e);
+                requestLegacyHint(currentActivity);
+            } else {
+                rejectHint(
+                        "HINT_UNAVAILABLE",
+                        e.getMessage() != null ? e.getMessage() : "Phone number hint unavailable");
+            }
         }
     }
 
-    @SuppressWarnings("deprecation")
+    /**
+     * Legacy Credentials HintRequest via reflection so play-services-auth 21+
+     * (Credentials removed) does not crash the app with NoClassDefFoundError.
+     */
     private void requestLegacyHint(Activity currentActivity) {
         if (currentActivity == null) {
             rejectHint("No Activity Found", "Current Activity Null.");
@@ -112,25 +170,62 @@ public class OtpVerifyModule extends ReactContextBaseJavaModule implements Lifec
         }
 
         try {
-            HintRequest hintRequest = new HintRequest.Builder()
-                    .setPhoneNumberIdentifierSupported(true)
-                    .build();
+            Class<?> hintRequestClass = Class.forName(
+                    "com.google.android.gms.auth.api.credentials.HintRequest");
+            Class<?> builderClass = Class.forName(
+                    "com.google.android.gms.auth.api.credentials.HintRequest$Builder");
+            Class<?> credentialsClass = Class.forName(
+                    "com.google.android.gms.auth.api.credentials.Credentials");
+
+            Object builder = builderClass.getDeclaredConstructor().newInstance();
+            builderClass.getMethod("setPhoneNumberIdentifierSupported", boolean.class)
+                    .invoke(builder, true);
+            Object hintRequest = builderClass.getMethod("build").invoke(builder);
+
+            Object credentialsClient = credentialsClass
+                    .getMethod("getClient", Context.class)
+                    .invoke(null, currentActivity);
+            Object pendingIntent = credentialsClient.getClass()
+                    .getMethod("getHintPickerIntent", hintRequestClass)
+                    .invoke(credentialsClient, hintRequest);
+            Object intentSender = pendingIntent.getClass()
+                    .getMethod("getIntentSender")
+                    .invoke(pendingIntent);
+
             currentActivity.startIntentSenderForResult(
-                    Credentials.getClient(currentActivity)
-                            .getHintPickerIntent(hintRequest)
-                            .getIntentSender(),
+                    (android.content.IntentSender) intentSender,
                     RESOLVE_HINT_LEGACY,
                     null,
                     0,
                     0,
                     0);
             Log.d(TAG, "Legacy phone hint picker launched");
-        } catch (IntentSender.SendIntentException e) {
+        } catch (ClassNotFoundException | NoClassDefFoundError e) {
+            Log.e(TAG, "Legacy Credentials API not on classpath (play-services-auth 21+)", e);
+            rejectHint(
+                    "HINT_UNAVAILABLE",
+                    "Legacy phone hint unavailable on this Play Services Auth version");
+        } catch (Throwable e) {
             Log.e(TAG, "Legacy hint picker failed", e);
-            rejectHint("HINT_UNAVAILABLE", "Phone number hint unavailable");
-        } catch (Exception e) {
-            Log.e(TAG, "Legacy hint picker failed", e);
-            rejectHint("HINT_UNAVAILABLE", e.getMessage() != null ? e.getMessage() : "Phone number hint unavailable");
+            rejectHint(
+                    "HINT_UNAVAILABLE",
+                    e.getMessage() != null ? e.getMessage() : "Phone number hint unavailable");
+        }
+    }
+
+    private String getLegacyCredentialId(Intent data) {
+        try {
+            Class<?> credentialClass = Class.forName(
+                    "com.google.android.gms.auth.api.credentials.Credential");
+            String extraKey = (String) credentialClass.getField("EXTRA_KEY").get(null);
+            Object credential = data.getParcelableExtra(extraKey);
+            if (credential == null) {
+                return null;
+            }
+            return (String) credentialClass.getMethod("getId").invoke(credential);
+        } catch (Throwable e) {
+            Log.e(TAG, "Failed to read legacy credential", e);
+            return null;
         }
     }
 
@@ -254,7 +349,6 @@ public class OtpVerifyModule extends ReactContextBaseJavaModule implements Lifec
     }
 
     @Override
-    @SuppressWarnings("deprecation")
     public void onActivityResult(Activity activity, int requestCode, int resultCode, Intent data) {
         if (requestCode != RESOLVE_HINT && requestCode != RESOLVE_HINT_LEGACY) {
             return;
@@ -267,12 +361,26 @@ public class OtpVerifyModule extends ReactContextBaseJavaModule implements Lifec
                     resolveHint(phoneNumber);
                     return;
                 } catch (Exception e) {
-                    Log.e(TAG, "New hint result parse failed, trying legacy hint", e);
+                    Log.e(TAG, "New hint result parse failed", e);
+                    if (allowLegacyFallback) {
+                        Log.e(TAG, "trying legacy hint", e);
+                        requestLegacyHint(activity);
+                        return;
+                    }
+                    rejectHint(
+                            "HINT_UNAVAILABLE",
+                            e.getMessage() != null ? e.getMessage() : "Phone number hint unavailable");
+                    return;
                 }
-            } else {
-                Log.e(TAG, "New hint cancelled/unavailable (resultCode=" + resultCode + "), trying legacy hint");
             }
-            requestLegacyHint(activity);
+
+            Log.e(TAG, "New hint cancelled/unavailable (resultCode=" + resultCode + ")");
+            if (allowLegacyFallback) {
+                Log.e(TAG, "trying legacy hint");
+                requestLegacyHint(activity);
+            } else {
+                rejectHint("HINT_CANCELLED", "Phone number hint cancelled or unavailable");
+            }
             return;
         }
 
@@ -282,13 +390,13 @@ public class OtpVerifyModule extends ReactContextBaseJavaModule implements Lifec
         }
 
         try {
-            Credential credential = data.getParcelableExtra(Credential.EXTRA_KEY);
-            if (credential != null && credential.getId() != null) {
-                resolveHint(credential.getId());
+            String phoneNumber = getLegacyCredentialId(data);
+            if (phoneNumber != null) {
+                resolveHint(phoneNumber);
             } else {
                 rejectHint("HINT_UNAVAILABLE", "Phone number hint unavailable");
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             rejectHint("HINT_UNAVAILABLE", e.getMessage() != null ? e.getMessage() : "Phone number hint unavailable");
         }
     }
