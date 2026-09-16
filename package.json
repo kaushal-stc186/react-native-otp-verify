@@ -1,6 +1,6 @@
 {
   "name": "react-native-phone-sms-retriever",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "Android SMS Retriever and Google phone number hint for React Native",
   "main": "lib/commonjs/index",
   "module": "lib/module/index",

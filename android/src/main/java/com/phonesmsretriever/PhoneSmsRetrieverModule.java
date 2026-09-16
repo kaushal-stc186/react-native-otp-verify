@@ -19,13 +19,10 @@ import com.google.android.gms.auth.api.identity.GetPhoneNumberHintIntentRequest;
 import com.google.android.gms.auth.api.identity.Identity;
 import com.google.android.gms.auth.api.phone.SmsRetriever;
 import com.google.android.gms.auth.api.phone.SmsRetrieverClient;
-import com.google.android.gms.tasks.OnCanceledListener;
-import com.google.android.gms.tasks.OnCompleteListener;
-import com.google.android.gms.tasks.OnFailureListener;
-import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.android.gms.tasks.Task;
 
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
@@ -39,6 +36,10 @@ public class PhoneSmsRetrieverModule extends ReactContextBaseJavaModule implemen
     private static final String TAG = PhoneSmsRetrieverModule.class.getSimpleName();
     private static final int RESOLVE_HINT = 11001;
     private static final int RESOLVE_HINT_LEGACY = 11002;
+    // CredentialsApi.ACTIVITY_RESULT_OTHER_ACCOUNT / NO_HINTS_AVAILABLE
+    private static final int LEGACY_RESULT_OTHER_ACCOUNT = 1001;
+    private static final int LEGACY_RESULT_NO_HINTS = 1002;
+
     private Promise requestHintCallback;
     private boolean allowLegacyFallback = true;
     private final ReactApplicationContext reactContext;
@@ -61,7 +62,8 @@ public class PhoneSmsRetrieverModule extends ReactContextBaseJavaModule implemen
     }
 
     /**
-     * New Phone Number Hint first, then legacy Credentials HintRequest as fallback.
+     * New Phone Number Hint first, then legacy Credentials HintRequest as fallback
+     * when the new API fails before showing UI (not when the user dismisses it).
      */
     @ReactMethod
     public void requestHint(Promise promise) {
@@ -83,8 +85,9 @@ public class PhoneSmsRetrieverModule extends ReactContextBaseJavaModule implemen
      */
     @ReactMethod
     public void requestLegacyPhoneHint(Promise promise) {
-        allowLegacyFallback = false;
-        requestHintCallback = promise;
+        if (!beginHintRequest(promise, false)) {
+            return;
+        }
 
         Activity currentActivity = getCurrentActivity();
         if (currentActivity == null) {
@@ -100,10 +103,22 @@ public class PhoneSmsRetrieverModule extends ReactContextBaseJavaModule implemen
         requestLegacyHint(currentActivity);
     }
 
-    private void requestPhoneHintInternal(Promise promise) {
-        Activity currentActivity = getCurrentActivity();
+    private boolean beginHintRequest(Promise promise, boolean legacyFallback) {
+        if (requestHintCallback != null) {
+            promise.reject("HINT_IN_PROGRESS", "A phone hint request is already in progress");
+            return false;
+        }
+        allowLegacyFallback = legacyFallback;
         requestHintCallback = promise;
+        return true;
+    }
 
+    private void requestPhoneHintInternal(Promise promise) {
+        if (!beginHintRequest(promise, allowLegacyFallback)) {
+            return;
+        }
+
+        Activity currentActivity = getCurrentActivity();
         if (currentActivity == null) {
             rejectHint("No Activity Found", "Current Activity Null.");
             return;
@@ -250,9 +265,16 @@ public class PhoneSmsRetrieverModule extends ReactContextBaseJavaModule implemen
     public boolean isSimUnavailable() {
         try {
             Activity currentActivity = getCurrentActivity();
-            TelephonyManager telephonyManager = (TelephonyManager) currentActivity.getSystemService(Context.TELEPHONY_SERVICE);
-            return !(telephonyManager.getSimState() == TelephonyManager.SIM_STATE_READY);
-        } catch (UnsupportedOperationException e) {
+            if (currentActivity == null) {
+                return true;
+            }
+            TelephonyManager telephonyManager =
+                    (TelephonyManager) currentActivity.getSystemService(Context.TELEPHONY_SERVICE);
+            if (telephonyManager == null) {
+                return true;
+            }
+            return telephonyManager.getSimState() != TelephonyManager.SIM_STATE_READY;
+        } catch (Exception e) {
             return true;
         }
     }
@@ -277,22 +299,26 @@ public class PhoneSmsRetrieverModule extends ReactContextBaseJavaModule implemen
         }
     }
 
-
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
     private void registerReceiverIfNecessary(BroadcastReceiver receiver) {
-        if (getCurrentActivity() == null) return;
+        if (isReceiverRegistered || receiver == null) {
+            return;
+        }
+        Activity activity = getCurrentActivity();
+        if (activity == null) {
+            return;
+        }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                getCurrentActivity().registerReceiver(
+                activity.registerReceiver(
                         receiver,
                         new IntentFilter(SmsRetriever.SMS_RETRIEVED_ACTION),
                         SmsRetriever.SEND_PERMISSION,
                         null,
                         Context.RECEIVER_EXPORTED
                 );
-            }
-            else {
-                getCurrentActivity().registerReceiver(
+            } else {
+                activity.registerReceiver(
                         receiver,
                         new IntentFilter(SmsRetriever.SMS_RETRIEVED_ACTION)
                 );
@@ -300,51 +326,54 @@ public class PhoneSmsRetrieverModule extends ReactContextBaseJavaModule implemen
             Log.d(TAG, "Receiver Registered");
             isReceiverRegistered = true;
         } catch (Exception e) {
-            e.printStackTrace();
+            Log.e(TAG, "Failed to register SMS receiver", e);
         }
     }
 
     private void requestOtp(final Promise promise) {
+        final AtomicBoolean settled = new AtomicBoolean(false);
         SmsRetrieverClient client = SmsRetriever.getClient(reactContext);
         Task<Void> task = client.startSmsRetriever();
-        task.addOnCanceledListener(new OnCanceledListener() {
-          @Override
-          public void onCanceled() {
-            Log.e(TAG, "sms listener cancelled");
-          }
-        });
-        task.addOnCompleteListener(new OnCompleteListener<Void>() {
-          @Override
-          public void onComplete(@NonNull Task<Void> task) {
-            Log.e(TAG, "sms listener complete");
-          }
-        });
-        task.addOnSuccessListener(new OnSuccessListener<Void>() {
-            @Override
-            public void onSuccess(Void aVoid) {
-                Log.e(TAG, "started sms listener");
+
+        task.addOnSuccessListener(aVoid -> {
+            if (settled.compareAndSet(false, true)) {
+                Log.d(TAG, "started sms listener");
                 promise.resolve(true);
             }
         });
 
-        task.addOnFailureListener(new OnFailureListener() {
-            @Override
-            public void onFailure(@NonNull Exception e) {
+        task.addOnFailureListener(e -> {
+            if (settled.compareAndSet(false, true)) {
                 Log.e(TAG, "Could not start sms listener", e);
-                promise.reject(e);
+                promise.reject("SMS_RETRIEVER_FAILED", e.getMessage(), e);
+            }
+        });
+
+        task.addOnCanceledListener(() -> {
+            if (settled.compareAndSet(false, true)) {
+                Log.e(TAG, "sms listener cancelled");
+                promise.reject("SMS_RETRIEVER_CANCELLED", "SMS retriever was cancelled");
             }
         });
     }
 
     private void unregisterReceiver(BroadcastReceiver receiver) {
-        if (isReceiverRegistered && getCurrentActivity() != null && receiver != null) {
-            try {
-                getCurrentActivity().unregisterReceiver(receiver);
-                Log.d(TAG, "Receiver UnRegistered");
-                isReceiverRegistered = false;
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+        if (!isReceiverRegistered || receiver == null) {
+            return;
+        }
+        Activity activity = getCurrentActivity();
+        if (activity == null) {
+            // Activity gone; clear flag so a later resume can register again.
+            isReceiverRegistered = false;
+            return;
+        }
+        try {
+            activity.unregisterReceiver(receiver);
+            Log.d(TAG, "Receiver UnRegistered");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to unregister SMS receiver", e);
+        } finally {
+            isReceiverRegistered = false;
         }
     }
 
@@ -355,37 +384,52 @@ public class PhoneSmsRetrieverModule extends ReactContextBaseJavaModule implemen
         }
 
         if (requestCode == RESOLVE_HINT) {
+            // New Phone Number Hint UI was shown (or attempted).
+            // RESULT_OK (-1)      → user picked a number
+            // RESULT_CANCELED (0) → user dismissed — do NOT try legacy
+            // other               → treat as unavailable; may try legacy
             if (resultCode == Activity.RESULT_OK && data != null) {
                 try {
                     String phoneNumber = Identity.getSignInClient(activity).getPhoneNumberFromIntent(data);
                     resolveHint(phoneNumber);
-                    return;
                 } catch (Exception e) {
                     Log.e(TAG, "New hint result parse failed", e);
-                    if (allowLegacyFallback) {
-                        Log.e(TAG, "trying legacy hint", e);
-                        requestLegacyHint(activity);
-                        return;
-                    }
                     rejectHint(
                             "HINT_UNAVAILABLE",
                             e.getMessage() != null ? e.getMessage() : "Phone number hint unavailable");
-                    return;
                 }
+                return;
             }
 
-            Log.e(TAG, "New hint cancelled/unavailable (resultCode=" + resultCode + ")");
+            if (resultCode == Activity.RESULT_CANCELED) {
+                Log.d(TAG, "New hint dismissed by user (resultCode=0)");
+                rejectHint("HINT_CANCELLED", "Phone number hint cancelled by user");
+                return;
+            }
+
+            Log.e(TAG, "New hint unavailable (resultCode=" + resultCode + ")");
             if (allowLegacyFallback) {
                 Log.e(TAG, "trying legacy hint");
                 requestLegacyHint(activity);
             } else {
-                rejectHint("HINT_CANCELLED", "Phone number hint cancelled or unavailable");
+                rejectHint("HINT_UNAVAILABLE", "Phone number hint unavailable");
             }
             return;
         }
 
+        // Legacy Credentials picker result
+        if (resultCode == Activity.RESULT_CANCELED || resultCode == LEGACY_RESULT_OTHER_ACCOUNT) {
+            rejectHint("HINT_CANCELLED", "Phone number hint cancelled by user");
+            return;
+        }
+
+        if (resultCode == LEGACY_RESULT_NO_HINTS) {
+            rejectHint("HINT_UNAVAILABLE", "No phone number hints available on this device");
+            return;
+        }
+
         if (resultCode != Activity.RESULT_OK || data == null) {
-            rejectHint("HINT_CANCELLED", "Phone number hint cancelled or unavailable");
+            rejectHint("HINT_UNAVAILABLE", "Phone number hint unavailable");
             return;
         }
 
@@ -397,13 +441,14 @@ public class PhoneSmsRetrieverModule extends ReactContextBaseJavaModule implemen
                 rejectHint("HINT_UNAVAILABLE", "Phone number hint unavailable");
             }
         } catch (Throwable e) {
-            rejectHint("HINT_UNAVAILABLE", e.getMessage() != null ? e.getMessage() : "Phone number hint unavailable");
+            rejectHint(
+                    "HINT_UNAVAILABLE",
+                    e.getMessage() != null ? e.getMessage() : "Phone number hint unavailable");
         }
     }
 
     @Override
     public void onNewIntent(Intent intent) {
-
     }
 
     @Override
@@ -423,11 +468,11 @@ public class PhoneSmsRetrieverModule extends ReactContextBaseJavaModule implemen
 
     @ReactMethod
     public void addListener(String eventName) {
-        // Keep: Required for RN built in Event Emitter Calls.
+        // Required for RN NativeEventEmitter.
     }
 
     @ReactMethod
     public void removeListeners(Integer count) {
-        // Keep: Required for RN built in Event Emitter Calls.
+        // Required for RN NativeEventEmitter.
     }
 }

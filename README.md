@@ -2,9 +2,9 @@
 
 Android [SMS Retriever](https://developers.google.com/identity/sms-retriever/overview) OTP auto-read and Google phone-number hint for React Native.
 
-**Platform:** Android only. On iOS, methods log `Not Supported on iOS` and return empty/false — they do not throw.
+**Platform:** Android only. On iOS, SMS helpers (`getOtp` / `getHash`) return empty/false; hint methods (`requestHint`, etc.) **reject**.
 
-Fork of [react-native-otp-verify](https://github.com/faizalshap/react-native-otp-verify). Native module: `PhoneSmsRetriever` (`com.phonesmsretriever`).
+Native module: `PhoneSmsRetriever` (`com.phonesmsretriever`).
 
 ## Install
 
@@ -91,9 +91,11 @@ requestHint()
 
 | Method | Behavior |
 |--------|----------|
-| `requestHint()` | New [Phone Number Hint](https://developers.google.com/identity/phone-number-hint/android) API, then legacy Credentials picker if that fails |
+| `requestHint()` | New [Phone Number Hint](https://developers.google.com/identity/phone-number-hint/android) API, then legacy Credentials picker **only if the new API fails before UI** |
 | `requestPhoneHint()` | New API only |
 | `requestLegacyPhoneHint()` | Legacy Credentials `HintRequest` only |
+
+**Cancel vs unavailable:** If the new picker opens and the user closes it (`resultCode=0`), the promise rejects with `HINT_CANCELLED` — legacy is **not** shown. Legacy runs only when `getPhoneNumberHintIntent` fails (e.g. `ApiException: 16`) or the intent cannot be launched.
 
 ### When hint fails (not a bug)
 
@@ -105,9 +107,10 @@ Many SIMs do not store the phone number (MSISDN). Play Services then returns err
 |------|------|------------|
 | `No Sim Avaiable` | SIM not `SIM_STATE_READY` | Ask user to check SIM |
 | `No Activity Found` | No foreground Activity | Call from a mounted screen, not at app launch |
-| `HINT_CANCELLED` | User dismissed picker | Manual entry |
-| `HINT_UNAVAILABLE` | No number on device, legacy API missing on classpath, or parse failed | Manual entry |
+| `HINT_CANCELLED` | User dismissed picker (new or legacy) | Manual entry |
+| `HINT_UNAVAILABLE` | No number on device, no hints, legacy API missing, or parse failed | Manual entry |
 | `HINT_LAUNCH_FAILED` | Could not open hint UI (new API only path) | Retry or manual entry |
+| `HINT_IN_PROGRESS` | Another hint request is already open | Wait for it to finish |
 
 Legacy picker needs `com.google.android.gms.auth.api.credentials.HintRequest`, removed in `play-services-auth` **21.0.0+**. This package pins **20.7.0** (see below).
 
@@ -128,17 +131,6 @@ rootProject.allprojects {
 ```
 
 If Firebase or Google Sign-In still resolves **21.x** in your app, add the same `resolutionStrategy` block to your Android **root** `build.gradle`, then rebuild and retest sign-in flows.
-
-## Use with `react-native-otp-verify`
-
-Both packages can be installed together. They use different Java packages and native module names, so you avoid dex duplicate errors on `AppSignatureHelper`:
-
-| Package | Native module | Java package |
-|---------|---------------|--------------|
-| `react-native-phone-sms-retriever` | `PhoneSmsRetriever` | `com.phonesmsretriever` |
-| `react-native-otp-verify` | `OtpVerify` | `com.faizal.OtpVerify` |
-
-Import SMS/hint APIs from whichever package your screen uses — do not assume both expose the same JS module name.
 
 ## API
 

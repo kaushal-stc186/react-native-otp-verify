@@ -31,8 +31,21 @@ public class AppSignatureHelper extends ContextWrapper {
         try {
             String packageName = getPackageName();
             PackageManager packageManager = getPackageManager();
-            Signature[] signatures = packageManager.getPackageInfo(packageName,
-                    PackageManager.GET_SIGNATURES).signatures;
+            Signature[] signatures;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                android.content.pm.SigningInfo signingInfo =
+                        packageManager.getPackageInfo(
+                                        packageName,
+                                        PackageManager.GET_SIGNING_CERTIFICATES)
+                                .signingInfo;
+                signatures = signingInfo != null
+                        ? signingInfo.getApkContentsSigners()
+                        : new Signature[0];
+            } else {
+                signatures = packageManager.getPackageInfo(
+                        packageName,
+                        PackageManager.GET_SIGNATURES).signatures;
+            }
 
             for (Signature signature : signatures) {
                 String hash = hash(packageName, signature.toCharsString());

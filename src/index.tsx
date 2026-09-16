@@ -1,5 +1,5 @@
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 const LINKING_ERROR =
   `The package 'react-native-phone-sms-retriever' doesn't seem to be linked. Make sure: \n\n` +
@@ -8,6 +8,7 @@ const LINKING_ERROR =
   '- You are not using Expo managed workflow\n';
 
 const EVENT = 'com.phonesmsretriever:otpReceived';
+const IOS_UNSUPPORTED = 'Not Supported on iOS';
 
 const RNPhoneSmsRetriever = NativeModules.PhoneSmsRetriever
   ? NativeModules.PhoneSmsRetriever
@@ -37,9 +38,14 @@ interface PhoneSmsRetriever {
   removeListener: () => void;
 }
 
+function rejectIosUnsupported(): Promise<never> {
+  console.warn(IOS_UNSUPPORTED);
+  return Promise.reject(new Error(IOS_UNSUPPORTED));
+}
+
 export async function getOtp(): Promise<boolean> {
   if (Platform.OS === 'ios') {
-    console.warn('Not Supported on iOS');
+    console.warn(IOS_UNSUPPORTED);
     return false;
   }
   return RNPhoneSmsRetriever.getOtp();
@@ -56,21 +62,28 @@ export const useOtpVerify = ({ numberOfDigits } = { numberOfDigits: 0 }) => {
   const [otp, setOtp] = useState<string | null>(null);
   const [timeoutError, setTimeoutError] = useState<boolean>(false);
   const [hash, setHash] = useState<string[] | null>([]);
+  const numberOfDigitsRef = useRef(numberOfDigits);
+  numberOfDigitsRef.current = numberOfDigits;
 
-  const handleMessage = (response: string) => {
+  const handleMessage = useCallback((response: string) => {
     if (response === 'Timeout Error.') {
       setTimeoutError(true);
-    } else {
-      setMessage(response);
-      if (numberOfDigits && response) {
-        const otpDigits = new RegExp(`(\\d{${numberOfDigits}})`, 'g').exec(response);
-        if (otpDigits && otpDigits[1]) setOtp(otpDigits[1]);
+      return;
+    }
+    setTimeoutError(false);
+    setMessage(response);
+    const digits = numberOfDigitsRef.current;
+    if (digits && response) {
+      const otpDigits = new RegExp(`(\\d{${digits}})`).exec(response);
+      if (otpDigits && otpDigits[1]) {
+        setOtp(otpDigits[1]);
       }
     }
-  };
+  }, []);
+
   useEffect(() => {
     if (Platform.OS === 'ios') {
-      console.warn('Not Supported on iOS');
+      console.warn(IOS_UNSUPPORTED);
       return;
     }
     getHash().then(setHash);
@@ -78,29 +91,34 @@ export const useOtpVerify = ({ numberOfDigits } = { numberOfDigits: 0 }) => {
     return () => {
       removeListener();
     };
-  }, []);
-  const startListener = () => {
+  }, [handleMessage]);
+
+  const startListener = useCallback(() => {
     if (Platform.OS === 'ios') {
-      console.warn('Not Supported on iOS');
-      return;
-    }
-    setOtp('');
-    setMessage('');
-    startOtpListener(handleMessage);
-  };
-  const stopListener = () => {
-    if (Platform.OS === 'ios') {
-      console.warn('Not Supported on iOS');
+      console.warn(IOS_UNSUPPORTED);
       return;
     }
     removeListener();
-  };
+    setOtp('');
+    setMessage('');
+    setTimeoutError(false);
+    startOtpListener(handleMessage);
+  }, [handleMessage]);
+
+  const stopListener = useCallback(() => {
+    if (Platform.OS === 'ios') {
+      console.warn(IOS_UNSUPPORTED);
+      return;
+    }
+    removeListener();
+  }, []);
+
   return { otp, message, hash, timeoutError, stopListener, startListener };
 };
 
 export async function getHash(): Promise<string[]> {
   if (Platform.OS === 'ios') {
-    console.warn('Not Supported on iOS');
+    console.warn(IOS_UNSUPPORTED);
     return [];
   }
   return RNPhoneSmsRetriever.getHash();
@@ -109,8 +127,7 @@ export async function getHash(): Promise<string[]> {
 /** New Phone Number Hint first, then legacy Credentials hint as fallback. */
 export async function requestHint(): Promise<string> {
   if (Platform.OS === 'ios') {
-    console.warn('Not Supported on iOS');
-    return '';
+    return rejectIosUnsupported();
   }
   return RNPhoneSmsRetriever.requestHint();
 }
@@ -118,8 +135,7 @@ export async function requestHint(): Promise<string> {
 /** New Phone Number Hint API only (no legacy fallback). */
 export async function requestPhoneHint(): Promise<string> {
   if (Platform.OS === 'ios') {
-    console.warn('Not Supported on iOS');
-    return '';
+    return rejectIosUnsupported();
   }
   return RNPhoneSmsRetriever.requestPhoneHint();
 }
@@ -127,8 +143,7 @@ export async function requestPhoneHint(): Promise<string> {
 /** Legacy Smart Lock / Credentials HintRequest only. */
 export async function requestLegacyPhoneHint(): Promise<string> {
   if (Platform.OS === 'ios') {
-    console.warn('Not Supported on iOS');
-    return '';
+    return rejectIosUnsupported();
   }
   return RNPhoneSmsRetriever.requestLegacyPhoneHint();
 }
